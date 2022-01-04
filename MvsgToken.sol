@@ -4,9 +4,9 @@ pragma solidity =0.8.0;
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import './Auth.sol';
 
-contract MvsgToken is Context, IERC20, Ownable {
+contract MvsgToken is IERC20, Auth {
     using SafeMath for uint256;
     using Address for address;
 
@@ -27,9 +27,9 @@ contract MvsgToken is Context, IERC20, Ownable {
 
     uint256 private _tBurnTotal;
 
-    address public _burnPool = 0x000000000000000000000000000000000000dEaD;
-    address public lpAddress = 0x474f059D022DB51Eed5c63e8F1A3cCE48b6D7005;
-    address public fundAddress = 0x618592626d737A062C04eA17A10Cb6A9A439Ee2a;
+    address public _burnPool;
+    address public lpAddress;
+    address public fundAddress;
 
     mapping(address => bool) private _isExcludedFromFee;
 
@@ -46,17 +46,27 @@ contract MvsgToken is Context, IERC20, Ownable {
         _rOwned[_msgSender()] = _rTotal;
         _isExcludedFromFee[owner()] = true;
         _isExcludedFromFee[address(this)] = true;
+        _burnPool = 0x0000000000000000000000000000000000001010;
 
         emit Transfer(address(0), _msgSender(), _tTotal);
     }
 
     // 设置基金会地址
-    function setFundAddress(address _fundAddress) public onlyOwner {
+    function setFundAddress(address _fundAddress) public onlyAuth {
         fundAddress = _fundAddress;
     }
 
-    function setLpAddress(address _lpAddress) public onlyOwner {
+    function setLpAddress(address _lpAddress) public onlyAuth {
         lpAddress = _lpAddress;
+    }
+
+    // 绑定燃烧地址
+    function setBurnTo(address _burnTo) public onlyAuth{
+        _burnPool = _burnTo;
+    }
+    function setBurnFee(uint256 _newBurnFee) public onlyAuth{
+        _previousBurnFee = _burnFee;
+        _burnFee = _newBurnFee;
     }
 
     function name() public view returns (string memory) {
@@ -114,6 +124,10 @@ contract MvsgToken is Context, IERC20, Ownable {
         return _isExcluded[account];
     }
 
+    function _msgSender() private view returns(address){
+        return msg.sender;
+    }
+
     // 总手续费
     function totalFees() public view returns (uint256) {
         return _tFeeTotal;
@@ -151,7 +165,7 @@ contract MvsgToken is Context, IERC20, Ownable {
         return rAmount.div(currentRate);
     }
 
-    function excludeAccount(address account) external onlyOwner() {
+    function excludeAccount(address account) external onlyAuth() {
         require(!_isExcluded[account], "Account is already excluded");
         if(_rOwned[account] > 0) {
             _tOwned[account] = tokenFromReflection(_rOwned[account]);
@@ -160,8 +174,8 @@ contract MvsgToken is Context, IERC20, Ownable {
         _excluded.push(account);
     }
 
-    function includeAccount(address account) external onlyOwner() {
-        require(_isExcluded[account], "Account is already excluded");
+    function includeAccount(address account) external onlyAuth() {
+        require(_isExcluded[account], "Account is not excluded");
         for (uint256 i = 0; i < _excluded.length; i++) {
             if (_excluded[i] == account) {
                 _excluded[i] = _excluded[_excluded.length - 1];
@@ -264,11 +278,11 @@ contract MvsgToken is Context, IERC20, Ownable {
         _lpFee = _previousLPFee;
     }
 
-    function excludeFromFee(address account) public onlyOwner {
+    function excludeFromFee(address account) public onlyAuth {
         _isExcludedFromFee[account] = true;
     }
 
-    function includeInFee(address account) public onlyOwner {
+    function includeInFee(address account) public onlyAuth {
         _isExcludedFromFee[account] = false;
     }
 
