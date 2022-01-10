@@ -7,9 +7,11 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
+import './Shard.sol';
 import './interfaces/IRoleAttrs.sol';
 import './library/TransferHelper.sol';
 import './library/SafeTransferLib.sol';
+import './library/AttrsUtil.sol';
 import './interfaces/IFeeCallee.sol';
 import './interfaces/INFTFactory.sol';
 import './interfaces/IPair.sol';
@@ -22,10 +24,12 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
     using Address for address;
     using SafeERC20 for IERC20;
 
+    mapping(address => bool) private whitelist;
 	uint private _rand = 1;
     address[] public shardList; // shard白名单
     mapping(uint256 => Attrs) private attrsList;
 	mapping(uint256 => uint256) private roleGrade;
+    mapping(uint256 => uint256) private roleEnergy; // 体力值
 	uint256[16] public updateGradePrice;
     uint256 public price; // 生成属性价格
     address private feeTo; // 生成属性费用接收地址
@@ -94,11 +98,15 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
     }
 
     function _createNewAttr() private {
+        // 计算概率
+        uint256 randValue = _getRandom(10, 100);
+        uint[2] memory range = AttrsUtil.getRandomRange(randValue);
+        uint256 attrValue6 = _getRandom(range[0], range[1]);
         Attrs memory _newAttrs = Attrs(
             address(0),
             0, 0,
             _getRandom(10, 100), _getRandom(10, 100), _getRandom(10, 100),
-            _getRandom(10, 100), _getRandom(10, 100), _getRandom(100, 1000),
+            _getRandom(10, 100), _getRandom(10, 100), attrValue6,
 			address(0),
             msg.sender
         );
@@ -140,15 +148,15 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         uint tokenId;
         address nftAddress = userNftAddress[msg.sender];
         if(nftAddress != address(0)){
-            tokenId = INFTFactory(nftFactory).createToken(nftAddress, tokenURI);
+            (nftAddress, tokenId) = INFTFactory(nftFactory).createToken(nftAddress, tokenURI);
         } else {
-            nftAddress = INFTFactory(nftFactory).createNFT('MetaSango Characters', 'HEROS', tokenURI, '');
-            tokenId = 1025; // createNFT会生成一个新的ERC721合约，它的第一个tokenId值为1025
+            (nftAddress, tokenId) = INFTFactory(nftFactory).createNFT('MetaSango Characters', 'HEROS', tokenURI, '');
             userNftAddress[msg.sender] = nftAddress;
         }
         attrsList[attrsId].nftAddress = nftAddress;
         attrsList[attrsId].tokenId = tokenId;
         attrsList[attrsId].linkShard = linkShard;
+        roleEnergy[attrsId] = _attrs.attrValue6; // 初始能量值等于施政能力
         // 转给个人
         SafeTransferLib.safeTransferFrom(nftAddress, address(this), msg.sender, tokenId, 1);
 
@@ -158,14 +166,13 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
     }
 
     // 获取有效的属性值
-    function getAttrs(uint256 attrsId) external virtual override view returns(Attrs memory attrs, uint256 grade){
+    function getAttrs(address user, uint256 attrsId) external virtual override view returns(Attrs memory attrs, uint256 grade, uint256 energy){
         attrs = attrsList[attrsId];
-		if(msg.sender != owner()){
-			require(attrs.nftAddress != address(0), 'Tips: 0005');
-			require(attrs.tokenId > 0, 'Tips: 0006');
-			require(attrs.attrValue6 > 0, 'Tips: 0007');
-		}
+        require(attrs.nftAddress != address(0), 'Tips: 0005');
+        require(attrs.tokenId > 0, 'Tips: 0006');
+        require(attrs.attrValue6 > 0, 'Tips: 0007');
         grade = roleGrade[attrsId];
+        energy = roleEnergy[attrsId];
     }
 
 	// 升级
@@ -175,13 +182,43 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
 		require(_attrs.tokenId > 0, 'Tips: 0006');
 		require(_attrs.attrValue6 > 0, 'Tips: 0007'); // 任何一个值 >0 视为有效
 		require(_attrs.linkShard != address(0), 'Tips: 00021');
-		uint256 grade = roleGrade[attrsId];
-		uint256 _price = updateGradePrice[grade + 1];
+		uint256 _grade = roleGrade[attrsId];
+		uint256 _price = updateGradePrice[_grade + 1];
 		require(_price > 0, 'Tips: 0022');
-        IERC20(_attrs.linkShard).safeTransferFrom(msg.sender, burnTo, _price);
-		roleGrade[attrsId] = grade + 1;
+        IERC20(_attrs.linkShard).safeTransferFrom(msg.sender, burnTo, _price.mul(_grade.add(1)));
+		roleGrade[attrsId] = _grade + 1;
+        // 提升体能
+        roleEnergy[attrsId] = roleEnergy[attrsId] + roleGrade[attrsId]*_attrs.attrValue6;
 		return true;
 	}
+
+    // 提升体力
+    function recoverEnergy(uint256 attrsId, uint256 amount) external virtual override returns(bool){
+        Attrs memory _attrs = attrsList[attrsId];
+        require(_attrs.nftAddress != address(0), 'Tips: 0005');
+        require(_attrs.tokenId > 0, 'Tips: 0006');
+        require(_attrs.attrValue6 > 0, 'Tips: 0007'); // 任何一个值 >0 视为有效
+        require(_attrs.linkShard != address(0), 'Tips: 00021');
+        // 1个碎片提升1个体能值
+        require(amount > 0, 'Tips: 0022');
+        uint256 decimals = Shard(_attrs.linkShard).decimals();
+        IERC20(_attrs.linkShard).safeTransferFrom(msg.sender, burnTo, amount);
+        roleEnergy[attrsId] = roleEnergy[attrsId] + amount.div(10 ** decimals);
+
+        return true;
+    }
+
+    function addEnergy(uint256 attrsId, uint256 num) external virtual override returns(bool){
+        require(whitelist[msg.sender], 'Tip: 0001');
+        roleEnergy[attrsId] = roleEnergy[attrsId] + num;
+        return true;
+    }
+
+    function subEnergy(uint256 attrsId, uint256 num) external virtual override returns(bool){
+        require(whitelist[msg.sender], 'Tip: 0002');
+        roleEnergy[attrsId] = roleEnergy[attrsId] - num;
+        return true;
+    }
 
     // 设置属性价格(可以为0)
     function setPrice(uint256 _price) external virtual onlyAuth returns(bool){
@@ -263,6 +300,22 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
     // 绑定燃烧地址
     function setBurnTo(address _burnTo) external virtual onlyAuth returns(bool){
         burnTo = _burnTo;
+        return true;
+    }
+
+    // 价格计算器
+    function setPriceUtilAddress(address _priceUtilAddress) external virtual onlyAuth returns(bool){
+        priceUtilAddress = _priceUtilAddress;
+        return true;
+    }
+
+    // 设置白名单
+    function setWhitelist(address _address, uint _status) external virtual onlyAuth returns(bool){
+        if(_status == 1){
+            whitelist[_address] = true;
+        } else {
+            delete whitelist[_address];
+        }
         return true;
     }
 }

@@ -11,6 +11,7 @@ import './library/SafeTransferLib.sol';
 import './library/TransferHelper.sol';
 import './interfaces/IInvite.sol';
 import './interfaces/IRoleAttrs.sol';
+import './Price.sol';
 import './Auth.sol';
 
 contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
@@ -18,6 +19,8 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
     using SafeERC20 for IERC20;
 
     address public factory; // 合约创建地址
+    address private priceUtilAddress;
+    address private pairAddress;
     // 系统参数
     address private burnTo;
     address private inviteAddress; // 邀请合约地址
@@ -58,7 +61,7 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
     function doPledge(address nftAddress, uint256 tokenId, uint256 attrId, uint256 capitalId) external returns(bool){
         require(block.timestamp >= startTime && block.timestamp < endTime, 'Tip: 1050');
         // 调用属性合约，验证nft是否有效
-        (IRoleAttrs.Attrs memory attrs, uint256 grade) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
+        (IRoleAttrs.Attrs memory attrs, uint256 grade,) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
         require(attrs.nftAddress == nftAddress && attrs.tokenId == tokenId, 'Tip: 1051');
         require(grade >= capitalId, 'Tip: 1052');
         require(heroLinkOrder[nftAddress][tokenId] == 0, 'Tip: 1053');
@@ -113,7 +116,7 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
 
     // 撤出
     function stopOrder(address nftAddress, uint256 tokenId, uint256 attrId) external returns(bool){
-        (IRoleAttrs.Attrs memory attrs,) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
+        (IRoleAttrs.Attrs memory attrs,,) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
         require(attrs.nftAddress == nftAddress && attrs.tokenId == tokenId, 'Tip: 1051');
         (, uint256 _orderIdx) = _getMyOrder(nftAddress, tokenId);
         // 距上一次结算收益大于48小时才能撤出 3600*48
@@ -137,7 +140,8 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
     function settleIncome(address nftAddress, uint256 tokenId, uint256 attrId) external returns(bool) {
         require(block.timestamp >= startTime && block.timestamp < endTime, 'Tip: 1050');
         require(tokenBAmount > 0, 'Tip: 1052');
-        (IRoleAttrs.Attrs memory attrs, uint256 grade) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
+        (IRoleAttrs.Attrs memory attrs, uint256 grade, uint256 energy) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
+        require(energy > attrs.attrValue6.mul(10).div(100), 'Tip: 1053'); // 体能 大于施政能力10%
         require(attrs.nftAddress == nftAddress && attrs.tokenId == tokenId, 'Tip: 1051');
         (Order memory order, uint256 _orderIdx) = _getMyOrder(nftAddress, tokenId);
         require(totalAbility[order.capitalId] > 0, 'Tip: 1062');
@@ -145,8 +149,13 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
         require(block.timestamp - order.lastActionTime > 3600*settleUnit, 'Tip: 1061');
         // 押入tokenB的总量，平分到12个城池，分3年释放，按小时算 3*365*24*12，点击一次释放24小时的，超出的时间不计
         uint256 hourProductAmount = tokenBAmount.div(3*365*24*12); // 每小时的释放量
-        pledgeOrders[_orderIdx].incomeAmount += settleUnit.mul(hourProductAmount).mul(attrs.attrValue6).div(totalAbility[grade]);
+        uint256 _newIncome = settleUnit.mul(hourProductAmount).mul(attrs.attrValue6).div(totalAbility[grade]);
+        pledgeOrders[_orderIdx].incomeAmount += _newIncome;
         pledgeOrders[_orderIdx].lastActionTime = block.timestamp;
+        // 降低体能 _newIncome 换算成U
+        uint256 _price = Price(priceUtilAddress).tokenPrice(pairAddress, tokenB);
+        IRoleAttrs(roleAttrsAddress).subEnergy(attrId, _newIncome.mul(_price));
+
         return true;
     }
 
@@ -209,6 +218,18 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
     function setSettleUnit(uint256 _settleUnit) external virtual onlyAuth returns(bool){
         require(_settleUnit > 0, "Tip: 1001");
         settleUnit = _settleUnit;
+        return true;
+    }
+
+    // 价格计算器
+    function setPriceUtilAddress(address _priceUtilAddress) external virtual onlyAuth returns(bool){
+        priceUtilAddress = _priceUtilAddress;
+        return true;
+    }
+
+    function setPairAddress(address _pairAddress) external virtual onlyAuth returns(bool){
+        require(_pairAddress != address(0), 'Tips: 0009');
+        pairAddress = _pairAddress;
         return true;
     }
 

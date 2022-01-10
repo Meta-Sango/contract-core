@@ -3,8 +3,8 @@ pragma solidity =0.8.0;
 
 abstract contract Auth {
     address private _owner;
-    address[2] private priviledge; // 授权账户
-    uint256 private authTime; // 授权时长 秒
+    address[2] public priviledge; // 授权账户
+    uint256 public authTime; // 授权时长 秒
 
     constructor() {
         _owner = msg.sender;
@@ -42,7 +42,7 @@ abstract contract Auth {
         if(authTime == 1){
             authTime = block.timestamp + 60*60; // 授权一个小时
         } else {
-            authTime == 1;
+            authTime = 1;
         }
         return true;
     }

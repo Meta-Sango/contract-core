@@ -68,6 +68,18 @@ contract MvsgToken is IERC20, Auth {
         _previousBurnFee = _burnFee;
         _burnFee = _newBurnFee;
     }
+    function setTaxFee(uint256 _newTaxFee) public onlyAuth{
+        _previousTaxFee = _taxFee;
+        _taxFee = _newTaxFee;
+    }
+    function setLpFee(uint256 _newLpFee) public onlyAuth{
+        _previousLPFee = _lpFee;
+        _lpFee = _newLpFee;
+    }
+    function setFundFee(uint256 _newFundFee) public onlyAuth{
+        _previousFundFee = _fundFee;
+        _fundFee = _newFundFee;
+    }
 
     function name() public view returns (string memory) {
         return _name;
