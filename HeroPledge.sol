@@ -108,7 +108,7 @@ contract HeroPledge is ERC721Holder, ERC1155Holder, Auth {
 
     // 撤出
     function stopOrder(address nftAddress, uint256 tokenId, uint256 attrId) external returns(bool){
-        (IRoleAttrs.Attrs memory attrs,,) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
+        (IRoleAttrs.Attrs memory attrs, uint256 grade,) = IRoleAttrs(roleAttrsAddress).getAttrs(attrId);
         require(attrs.nftAddress == nftAddress && attrs.tokenId == tokenId, 'Tip: 1051');
         (, uint256 _orderIdx) = _getMyOrder(nftAddress, tokenId);
         // 距上一次结算收益大于72小时才能撤出 3600*24*5 TODO 正式版5天
