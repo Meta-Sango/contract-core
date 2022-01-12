@@ -18,16 +18,16 @@ contract MvsgToken is IERC20, Auth {
     address[] private _excluded;
 
     uint256 private constant MAX = ~uint256(0);
-    string private _name = 'MetaSango';
-    string private _symbol = 'MVSG';
-    uint8 private _decimals = 18;
+    string private constant _name = 'MetaSango';
+    string private constant _symbol = 'MVSG';
+    uint8 private constant _decimals = 18;
     uint256 private  _tTotal = 100000000 * 10**_decimals;
     uint256 private _rTotal = (MAX - (MAX % _tTotal));
     uint256 private _tFeeTotal;
 
     uint256 private _tBurnTotal;
 
-    address public _burnPool;
+    address public constant _burnPool = 0x0000000000000000000000000000000000000001;
     address public lpAddress;
     address public fundAddress;
 
@@ -42,11 +42,12 @@ contract MvsgToken is IERC20, Auth {
     uint256 public _lpFee = 2;
     uint256 private _previousLPFee = _lpFee;
 
+    event HandlerEvent(uint8);
+
     constructor () {
         _rOwned[_msgSender()] = _rTotal;
         _isExcludedFromFee[owner()] = true;
         _isExcludedFromFee[address(this)] = true;
-        _burnPool = 0x0000000000000000000000000000000000001010;
 
         emit Transfer(address(0), _msgSender(), _tTotal);
     }
@@ -54,31 +55,33 @@ contract MvsgToken is IERC20, Auth {
     // 设置基金会地址
     function setFundAddress(address _fundAddress) public onlyAuth {
         fundAddress = _fundAddress;
+        emit HandlerEvent(1);
     }
 
     function setLpAddress(address _lpAddress) public onlyAuth {
         lpAddress = _lpAddress;
+        emit HandlerEvent(2);
     }
 
-    // 绑定燃烧地址
-    function setBurnTo(address _burnTo) public onlyAuth{
-        _burnPool = _burnTo;
-    }
     function setBurnFee(uint256 _newBurnFee) public onlyAuth{
         _previousBurnFee = _burnFee;
         _burnFee = _newBurnFee;
+        emit HandlerEvent(3);
     }
     function setTaxFee(uint256 _newTaxFee) public onlyAuth{
         _previousTaxFee = _taxFee;
         _taxFee = _newTaxFee;
+        emit HandlerEvent(4);
     }
     function setLpFee(uint256 _newLpFee) public onlyAuth{
         _previousLPFee = _lpFee;
         _lpFee = _newLpFee;
+        emit HandlerEvent(5);
     }
     function setFundFee(uint256 _newFundFee) public onlyAuth{
         _previousFundFee = _fundFee;
         _fundFee = _newFundFee;
+        emit HandlerEvent(6);
     }
 
     function name() public view returns (string memory) {
@@ -292,10 +295,12 @@ contract MvsgToken is IERC20, Auth {
 
     function excludeFromFee(address account) public onlyAuth {
         _isExcludedFromFee[account] = true;
+        emit HandlerEvent(7);
     }
 
     function includeInFee(address account) public onlyAuth {
         _isExcludedFromFee[account] = false;
+        emit HandlerEvent(8);
     }
 
     function _reflectFee(uint256 rFee, uint256 rBurn, uint256 tFee, uint256 tBurn) private {

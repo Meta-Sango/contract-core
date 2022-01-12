@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.0;
+pragma solidity >=0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -25,35 +25,30 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
     using SafeERC20 for IERC20;
 
     mapping(address => bool) private whitelist;
-	uint private _rand = 1;
+    uint private _rand = 1;
     address[] public shardList; // shard白名单
     mapping(uint256 => Attrs) private attrsList;
-	mapping(uint256 => uint256) private roleGrade;
+    mapping(uint256 => uint256) private roleGrade;
     mapping(uint256 => uint256) private roleEnergy; // 体力值
-	uint256[16] public updateGradePrice;
+    uint256[16] public updateGradePrice;
     uint256 public price; // 生成属性价格
-    address private feeTo; // 生成属性费用接收地址
     uint256 public createPrice; // 创建英雄价格
-    uint256 private burnRate; // 燃烧比例 %
-    address private feeToHero; // 创建英雄费用接收地址
-    address private burnTo;
-    uint256 public lastAttrsId = 1024;
-    address private settleToken;
-    address private pairAddress;
-    address private priceUtilAddress;
+    address public settleToken;
+    address public pairAddress;
+    address public priceUtilAddress;
     address private nftFactory; // nft工厂
-    mapping(address => address) public userNftAddress; // 用户地址 => nftAddress 一个人只能创建一个栏目
+    address public nftAddress;
+    address private feeTo; // 生成属性费用接收地址
+    address private feeToHero; // 创建英雄费用接收地址
+    address public constant burnTo = 0x0000000000000000000000000000000000000001;
+    uint256 public lastAttrsId = 1024;
+    uint256 public recoverRate; // 体力恢复费率
 
     event AttrsGenerated(uint256, uint256[6]);
     event CreatedHero(address, address, uint256, uint256);
 
-    constructor(address _settleToken, address _nftFactory) {
-        require(_settleToken != address(0), "Tip: 001");
-        require(_nftFactory != address(0), "Tip: 002");
-        settleToken = _settleToken;
-        nftFactory = _nftFactory;
-        burnTo = 0x0000000000000000000000000000000000001010;
-        burnRate = 93; // 默认燃烧 93%
+    constructor() {
+        recoverRate = 1;
         _createNewAttr();
     }
 
@@ -62,16 +57,16 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         if(_price == 0){
             return 0;
         }
-        require(priceUtilAddress != address(0), 'Tip: 0001');
-        require(pairAddress != address(0), 'Tip: 0002');
-        require(settleToken != address(0), 'Tip: 0003');
+        require(pairAddress != address(0), 'Tips: 0001');
+        require(settleToken != address(0), 'Tips: 0002');
+        require(priceUtilAddress != address(0), 'Tips: 0003');
         Price priceUtil = Price(priceUtilAddress);
         uint256 amount = priceUtil.tokenAmount(pairAddress, settleToken, _price);
-        require(amount > 0, 'Tip: 0002');
+        require(amount > 0, 'Tips: 0004');
         return amount;
     }
 
-    function getSettleAmount(uint256 _price) external virtual returns(uint256){
+    function getSettleAmount(uint256 _price) external view virtual returns(uint256){
         return _cauSettleAmount(_price);
     }
 
@@ -91,6 +86,7 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         Attrs memory _attrs = attrsList[attrsId];
         attrValues = [_attrs.attrValue1, _attrs.attrValue2, _attrs.attrValue3, _attrs.attrValue4, _attrs.attrValue5, _attrs.attrValue6];
         attrsList[attrsId].regionSn = regionSn;
+        attrsList[attrsId].creator = msg.sender;
         lastAttrsId++;
         _createNewAttr();
 
@@ -107,8 +103,8 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
             0, 0,
             _getRandom(10, 100), _getRandom(10, 100), _getRandom(10, 100),
             _getRandom(10, 100), _getRandom(10, 100), attrValue6,
-			address(0),
-            msg.sender
+            address(0),
+            address(0)
         );
         attrsList[lastAttrsId] = _newAttrs;
     }
@@ -138,20 +134,16 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         if(amount > 0){
             require(feeToHero != address(0), 'Tip: 1001');
             require(settleToken != address(0), 'Tip: 1002');
-            uint _burnNum = amount.mul(burnRate).div(100);
-            IERC20(settleToken).safeTransferFrom(msg.sender, burnTo, _burnNum);
-            TransferHelper.safeTransferFrom(settleToken, msg.sender, feeToHero, amount.sub(_burnNum));
+            TransferHelper.safeTransferFrom(settleToken, msg.sender, feeToHero, amount);
             if(feeToHero.isContract()){
                 IFeeCallee(feeToHero).feeCall(msg.sender, amount, 2);
             }
         }
         uint tokenId;
-        address nftAddress = userNftAddress[msg.sender];
         if(nftAddress != address(0)){
             (nftAddress, tokenId) = INFTFactory(nftFactory).createToken(nftAddress, tokenURI);
         } else {
             (nftAddress, tokenId) = INFTFactory(nftFactory).createNFT('MetaSango Characters', 'HEROS', tokenURI, '');
-            userNftAddress[msg.sender] = nftAddress;
         }
         attrsList[attrsId].nftAddress = nftAddress;
         attrsList[attrsId].tokenId = tokenId;
@@ -166,7 +158,7 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
     }
 
     // 获取有效的属性值
-    function getAttrs(address user, uint256 attrsId) external virtual override view returns(Attrs memory attrs, uint256 grade, uint256 energy){
+    function getAttrs(uint256 attrsId) external virtual override view returns(Attrs memory attrs, uint256 grade, uint256 energy){
         attrs = attrsList[attrsId];
         require(attrs.nftAddress != address(0), 'Tips: 0005');
         require(attrs.tokenId > 0, 'Tips: 0006');
@@ -175,31 +167,36 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         energy = roleEnergy[attrsId];
     }
 
-	// 升级
-	function upgrade(uint256 attrsId) external virtual override returns(bool){
-		Attrs memory _attrs = attrsList[attrsId];
-		require(_attrs.nftAddress != address(0), 'Tips: 0005');
-		require(_attrs.tokenId > 0, 'Tips: 0006');
-		require(_attrs.attrValue6 > 0, 'Tips: 0007'); // 任何一个值 >0 视为有效
-		require(_attrs.linkShard != address(0), 'Tips: 00021');
-		uint256 _grade = roleGrade[attrsId];
-		uint256 _price = updateGradePrice[_grade + 1];
-		require(_price > 0, 'Tips: 0022');
-        IERC20(_attrs.linkShard).safeTransferFrom(msg.sender, burnTo, _price.mul(_grade.add(1)));
-		roleGrade[attrsId] = _grade + 1;
-        // 提升体能
-        roleEnergy[attrsId] = roleEnergy[attrsId] + roleGrade[attrsId]*_attrs.attrValue6;
-		return true;
-	}
-
-    // 提升体力
-    function recoverEnergy(uint256 attrsId, uint256 amount) external virtual override returns(bool){
+    // 升级
+    function upgrade(uint256 attrsId) external virtual override returns(bool){
         Attrs memory _attrs = attrsList[attrsId];
         require(_attrs.nftAddress != address(0), 'Tips: 0005');
         require(_attrs.tokenId > 0, 'Tips: 0006');
         require(_attrs.attrValue6 > 0, 'Tips: 0007'); // 任何一个值 >0 视为有效
         require(_attrs.linkShard != address(0), 'Tips: 00021');
-        // 1个碎片提升1个体能值
+        uint256 _grade = roleGrade[attrsId];
+        uint256 _price = updateGradePrice[_grade + 1];
+        require(_price > 0, 'Tips: 0022');
+        IERC20(_attrs.linkShard).safeTransferFrom(msg.sender, burnTo, _price.mul(_grade.add(1)));
+        roleGrade[attrsId] = _grade + 1;
+        // 提升体能
+        roleEnergy[attrsId] = roleEnergy[attrsId] + (_grade + 2)*_attrs.attrValue6;
+        return true;
+    }
+
+    // 提升体力
+    function recoverEnergy(uint256 attrsId, uint256 addEnergyNum) external virtual override returns(bool){
+        Attrs memory _attrs = attrsList[attrsId];
+        // 限定最大可恢复体力值
+        uint _grade = roleGrade[attrsId];
+        uint maxEnergy = _attrs.attrValue6 * (_grade + 1)*(_grade + 2)/2;
+        require(addEnergyNum <= maxEnergy.sub(roleEnergy[attrsId]), 'Tips: 0001');
+        require(_attrs.nftAddress != address(0), 'Tips: 0005');
+        require(_attrs.tokenId > 0, 'Tips: 0006');
+        require(_attrs.attrValue6 > 0, 'Tips: 0007'); // 任何一个值 >0 视为有效
+        require(_attrs.linkShard != address(0), 'Tips: 00021');
+        // 需消耗的碎片数量
+        uint256 amount = addEnergyNum.mul(recoverRate);
         require(amount > 0, 'Tips: 0022');
         uint256 decimals = Shard(_attrs.linkShard).decimals();
         IERC20(_attrs.linkShard).safeTransferFrom(msg.sender, burnTo, amount);
@@ -220,40 +217,25 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         return true;
     }
 
-    // 设置属性价格(可以为0)
-    function setPrice(uint256 _price) external virtual onlyAuth returns(bool){
+    // 设置价格(可以为0)
+    function setPrice(uint256 _price, uint256 _createPrice) external virtual onlyAuth returns(bool){
         price = _price;
-        return true;
-    }
-
-    // 设置创造英雄价格
-    function setCreatePrice(uint256 _createPrice) external virtual onlyAuth returns(bool){
         createPrice = _createPrice;
         return true;
     }
 
-    // 设置属性feeTo
-    function setFeeTo(address _feeTo) external virtual onlyAuth returns(bool){
+    function setFeeTo(address _feeTo, address _feeToHero) external virtual onlyAuth returns(bool){
+        // 设置属性feeTo
         require(_feeTo != address(0), 'Tips: 0008');
         feeTo = _feeTo;
-        return true;
-    }
-
-    // 设置创造英雄feeTo
-    function setFeeToHero(address _feeToHero) external virtual onlyAuth returns(bool){
+        // 设置创造英雄feeTo
         require(_feeToHero != address(0), 'Tips: 0008');
         feeToHero = _feeToHero;
         return true;
     }
 
-    // 设置创造英雄价格销毁比例(可以为0)
-    function setBurnRate(uint256 _burnRate) external virtual onlyAuth returns(bool){
-        burnRate = _burnRate; // %
-        return true;
-    }
-
     // 设置升级价格(可以为0)
-	function setUpgradePrice(uint256[16] memory _updateGradePrice) external onlyAuth virtual returns(bool){
+    function setUpgradePrice(uint256[16] memory _updateGradePrice) external onlyAuth virtual returns(bool){
         updateGradePrice = _updateGradePrice;
         return true;
     }
@@ -265,15 +247,11 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         return true;
     }
 
-    function setSettleToken(address _settleToken) external virtual onlyAuth returns(bool){
+    function setPairAddress(address _pairAddress, address _settleToken) external virtual onlyAuth returns(bool){
+        require(_pairAddress != address(0), 'Tips: 0008');
+        pairAddress = _pairAddress;
         require(_settleToken != address(0), 'Tips: 0009');
         settleToken = _settleToken;
-        return true;
-    }
-
-    function setPairAddress(address _pairAddress) external virtual onlyAuth returns(bool){
-        require(_pairAddress != address(0), 'Tips: 0009');
-        pairAddress = _pairAddress;
         return true;
     }
 
@@ -297,25 +275,25 @@ contract RoleAttrs is IRoleAttrs, ERC721Holder, ERC1155Holder, Auth {
         return flag;
     }
 
-    // 绑定燃烧地址
-    function setBurnTo(address _burnTo) external virtual onlyAuth returns(bool){
-        burnTo = _burnTo;
-        return true;
-    }
-
     // 价格计算器
     function setPriceUtilAddress(address _priceUtilAddress) external virtual onlyAuth returns(bool){
         priceUtilAddress = _priceUtilAddress;
         return true;
     }
 
-    // 设置白名单
+    // 设置体能恢复/降低白名单，道具预留
     function setWhitelist(address _address, uint _status) external virtual onlyAuth returns(bool){
         if(_status == 1){
             whitelist[_address] = true;
         } else {
             delete whitelist[_address];
         }
+        return true;
+    }
+
+    // 设置体力恢复费率
+    function setRecoverRate(uint _recoverRate) external virtual onlyAuth returns(bool){
+        recoverRate = _recoverRate;
         return true;
     }
 }
